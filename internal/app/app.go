@@ -38,9 +38,10 @@ type FileRecord struct {
 }
 
 type State struct {
-	Version int                   `json:"version"`
-	Rules   []Rule                `json:"rules"`
-	Files   map[string]FileRecord `json:"files"`
+	Version   int                   `json:"version"`
+	Rules     []Rule                `json:"rules"`
+	Files     map[string]FileRecord `json:"files"`
+	Wildcards []string              `json:"wildcards,omitempty"`
 }
 
 type server struct {
@@ -218,13 +219,13 @@ func (s *server) save() error {
 	if err := os.WriteFile(tmp, append(b, '\n'), 0600); err != nil {
 		return err
 	}
-	return os.Rename(tmp, s.statePath)
+	return replaceFile(tmp, s.statePath)
 }
 
 func (s *server) status(w http.ResponseWriter, _ *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	writeJSON(w, map[string]any{"storage": s.source, "mirror": s.target, "imports": s.imports, "source": s.source, "target": s.target, "platform": runtime.GOOS, "instance": s.instance, "rules": s.state.Rules, "managedFiles": len(s.state.Files)})
+	writeJSON(w, map[string]any{"storage": s.source, "mirror": s.target, "imports": s.imports, "source": s.source, "target": s.target, "platform": runtime.GOOS, "instance": s.instance, "rules": s.state.Rules, "wildcards": s.state.Wildcards, "managedFiles": len(s.state.Files)})
 }
 
 func (s *server) tree(w http.ResponseWriter, _ *http.Request) {
@@ -355,6 +356,10 @@ func (s *server) collectPreview(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	if err := s.rememberWildcard(request.Pattern); err != nil {
+		writeError(w, err)
+		return
+	}
 	writeJSON(w, p)
 }
 
@@ -369,6 +374,10 @@ func (s *server) collectApply(w http.ResponseWriter, r *http.Request) {
 	p, err := s.makeCollectPlan(request)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := s.rememberWildcard(request.Pattern); err != nil {
+		writeError(w, err)
 		return
 	}
 	result := newPlan()
@@ -652,6 +661,21 @@ func (s *server) collectSourcePath(relative string) (string, error) {
 		return "", errors.New("import source is no longer a regular file")
 	}
 	return safePathInside(s.imports, path)
+}
+
+func (s *server) rememberWildcard(pattern string) error {
+	pattern = strings.TrimSpace(pattern)
+	wildcards := []string{pattern}
+	for _, existing := range s.state.Wildcards {
+		if existing != pattern {
+			wildcards = append(wildcards, existing)
+		}
+		if len(wildcards) == 12 {
+			break
+		}
+	}
+	s.state.Wildcards = wildcards
+	return s.save()
 }
 
 func cleanRelative(path string, allowEmpty bool) (string, error) {

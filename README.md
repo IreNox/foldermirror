@@ -39,6 +39,6 @@ Or install the flake package into a system or Home Manager configuration. The ap
 
 State is stored as `.foldermirror.json` inside the mirror by default. Folder rules use nearest-parent inheritance: selecting a parent includes its descendants, while a child can be explicitly excluded (and vice versa).
 
-The optional **Collect files** mode scans a selected imports subfolder recursively. A filename wildcard such as `*.mkv` is matched against each basename, and matching files are hardlinked beneath a chosen storage subfolder while preserving their relative paths. Existing different files are reported as conflicts and never overwritten.
+The optional **Collect files** mode scans a selected imports subfolder recursively. Choose both the import folder and an existing storage destination from collapsible trees. A filename wildcard such as `*.mkv` is matched against each basename, and matching files are hardlinked beneath the storage selection while preserving their relative paths. The 12 most recently used unique wildcards are saved for autocomplete. Existing different files are reported as conflicts and never overwritten.
 
 The older `-source` and `-target` flags remain available as aliases for `-storage` and `-mirror`.

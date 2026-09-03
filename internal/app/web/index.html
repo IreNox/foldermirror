@@ -9,30 +9,31 @@
   <main>
     <header><div class="brand"><span class="mark">FM</span><div><h1>FolderMirror</h1><p>Hardlink storage workspace</p></div></div><span id="platform" class="pill">Loading</span></header>
     <nav class="mode-tabs" aria-label="Workspace mode">
-      <button id="mirror-tab" class="mode-tab active" aria-selected="true">Mirror storage</button>
-      <button id="collect-tab" class="mode-tab" aria-selected="false">Collect files</button>
+      <button id="collect-tab" class="mode-tab active" aria-selected="true">Collect files</button>
+      <button id="mirror-tab" class="mode-tab" aria-selected="false">Mirror storage</button>
     </nav>
-    <section id="mirror-mode" class="mode-view">
-      <section class="paths"><div><label>Storage</label><code id="storage">—</code></div><span class="arrow">→</span><div><label>Mirror</label><code id="mirror">—</code></div></section>
-      <div class="grid">
-        <section class="panel tree-panel"><div class="panel-head"><div><h2>Choose folders</h2><p>Child choices override their parents.</p></div><button id="save" class="secondary">Save choices</button></div><div id="tree" class="tree"><div class="empty">Scanning folders…</div></div></section>
-        <section class="panel run-panel"><div class="panel-head"><div><h2>Reconcile</h2><p>Review changes before touching the mirror.</p></div></div><div class="summary"><div><strong id="managed">0</strong><span>managed files</span></div><div><strong id="selected">0</strong><span>folder rules</span></div></div><div class="actions"><button id="preview">Preview changes</button><button id="apply" class="danger" disabled>Apply plan</button></div><div id="message" role="status" class="message">Save your choices, then preview.</div><div id="plan" class="plan"></div></section>
-      </div>
-    </section>
-    <section id="collect-mode" class="mode-view" hidden>
+    <section id="collect-mode" class="mode-view">
       <section class="paths"><div><label>Imports</label><code id="imports">Not configured</code></div><span class="arrow">→</span><div><label>Storage</label><code id="collect-storage">—</code></div></section>
-      <div class="grid">
+      <div class="collect-grid">
         <section class="panel tree-panel"><div class="panel-head"><div><h2>Choose import folder</h2><p>The selected folder is scanned recursively.</p></div></div><div id="collect-tree" class="tree"><div class="empty">Open this mode to scan folders.</div></div></section>
+        <section class="panel tree-panel"><div class="panel-head"><div><h2>Choose storage folder</h2><p>Matching files are linked beneath it.</p></div></div><div id="collect-storage-tree" class="tree"><div class="empty">Scanning storage folders…</div></div></section>
         <section class="panel run-panel">
-          <div class="panel-head"><div><h2>Collect matching files</h2><p>Relative folders are preserved in storage.</p></div></div>
+          <div class="panel-head"><div><h2>Collect matching files</h2><p>Relative folders beneath the import selection are preserved.</p></div></div>
           <form id="collect-form" class="collect-form">
             <label>Selected import folder<input id="collect-folder" readonly placeholder="Choose a folder from the tree"></label>
-            <label>Filename wildcard<input id="collect-pattern" value="*" required placeholder="*.mkv"></label>
-            <label>Storage subfolder<input id="collect-destination" required placeholder="Movies/Incoming"></label>
+            <label>Storage destination<input id="collect-destination" readonly required placeholder="Choose a folder from the storage tree"></label>
+            <label>Filename wildcard<input id="collect-pattern" list="wildcard-history" value="*" required placeholder="*.mkv"><datalist id="wildcard-history"></datalist></label>
           </form>
           <div class="actions"><button id="collect-preview">Preview links</button><button id="collect-apply" class="danger" disabled>Apply plan</button></div>
           <div id="collect-message" role="status" class="message">Choose a folder, pattern, and storage subfolder.</div><div id="collect-plan" class="plan"></div>
         </section>
+      </div>
+    </section>
+    <section id="mirror-mode" class="mode-view" hidden>
+      <section class="paths"><div><label>Storage</label><code id="storage">—</code></div><span class="arrow">→</span><div><label>Mirror</label><code id="mirror">—</code></div></section>
+      <div class="grid">
+        <section class="panel tree-panel"><div class="panel-head"><div><h2>Choose folders</h2><p>Child choices override their parents.</p></div><button id="save" class="secondary">Save choices</button></div><div id="tree" class="tree"><div class="empty">Scanning folders…</div></div></section>
+        <section class="panel run-panel"><div class="panel-head"><div><h2>Reconcile</h2><p>Review changes before touching the mirror.</p></div></div><div class="summary"><div><strong id="managed">0</strong><span>managed files</span></div><div><strong id="selected">0</strong><span>folder rules</span></div></div><div class="actions"><button id="preview">Preview changes</button><button id="apply" class="danger" disabled>Apply plan</button></div><div id="message" role="status" class="message">Save your choices, then preview.</div><div id="plan" class="plan"></div></section>
       </div>
     </section>
   </main>

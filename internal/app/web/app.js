@@ -3,8 +3,10 @@ let rules = [];
 let lastPlan = null;
 let lastCollectPlan = null;
 let collectLoaded = false;
+let wildcardHistory = [];
 const expanded = new Set();
 const collectExpanded = new Set();
+const storageExpanded = new Set();
 const $ = id => document.getElementById(id);
 
 async function api(path, options = {}) {
@@ -72,6 +74,17 @@ function collectNodeView(node) {
   return wrapNode(node, row, collectExpanded.has(node.path), collectNodeView);
 }
 
+function storageNodeView(node) {
+  const toggle = foldButton(node, storageExpanded, () => renderStorageTree(window.treeData));
+  const radio = document.createElement('input');
+  radio.type = 'radio'; radio.name = 'collect-destination'; radio.checked = $('collect-destination').value === node.path;
+  radio.setAttribute('aria-label', `Collect into ${node.name}`);
+  radio.onchange = () => { $('collect-destination').value = node.path; lastCollectPlan = null; $('collect-apply').disabled = true; renderStorageTree(window.treeData); };
+  const label = document.createElement('label'); label.textContent = node.name; label.onclick = () => radio.click();
+  const row = document.createElement('div'); row.className = 'node-row'; row.append(toggle, radio, label);
+  return wrapNode(node, row, storageExpanded.has(node.path), storageNodeView);
+}
+
 function wrapNode(node, row, isOpen, renderer) {
   const wrap = document.createElement('div'); wrap.append(row);
   if (node.children?.length && isOpen) {
@@ -90,6 +103,7 @@ function renderRoots(host, tree, renderer, emptyText) {
 
 function renderTree(tree) { renderRoots($('tree'), tree, mirrorNodeView, 'The storage folder has no subfolders.'); }
 function renderCollectTree(tree) { renderRoots($('collect-tree'), tree, collectNodeView, 'The imports folder has no subfolders.'); }
+function renderStorageTree(tree) { renderRoots($('collect-storage-tree'), tree, storageNodeView, 'The storage folder has no subfolders.'); }
 function normalizedPlan(plan) { return { create: plan.create || [], remove: plan.remove || [], skip: plan.skip || [] }; }
 
 function renderPlanInto(plan, host, applyButton, message, createTitle = 'Create links') {
@@ -107,6 +121,15 @@ function renderPlanInto(plan, host, applyButton, message, createTitle = 'Create 
 
 function collectRequest() { return { folder: $('collect-folder').value, pattern: $('collect-pattern').value, destination: $('collect-destination').value }; }
 function showError(element, error) { element.textContent = error.message; element.className = 'message error'; }
+function rememberWildcard(pattern) {
+  pattern = pattern.trim();
+  wildcardHistory = [pattern, ...wildcardHistory.filter(item => item !== pattern)].slice(0, 12);
+  renderWildcardHistory();
+}
+function renderWildcardHistory() {
+  const list = $('wildcard-history'); list.replaceChildren();
+  for (const item of wildcardHistory) { const option = document.createElement('option'); option.value = item; list.append(option); }
+}
 
 async function showMode(mode) {
   const collect = mode === 'collect';
@@ -114,7 +137,7 @@ async function showMode(mode) {
   $('mirror-tab').classList.toggle('active', !collect); $('collect-tab').classList.toggle('active', collect);
   $('mirror-tab').setAttribute('aria-selected', String(!collect)); $('collect-tab').setAttribute('aria-selected', String(collect));
   if (collect && !collectLoaded && !$('collect-tab').disabled) {
-    try { window.collectTreeData = await api('/api/collect/tree'); renderCollectTree(window.collectTreeData); collectLoaded = true; }
+    try { window.collectTreeData = await api('/api/collect/tree'); renderCollectTree(window.collectTreeData); renderStorageTree(window.treeData); collectLoaded = true; }
     catch (error) { showError($('collect-message'), error); }
   }
 }
@@ -126,8 +149,10 @@ async function init() {
     $('mirror').textContent = status.mirror; $('imports').textContent = status.imports || 'Not configured';
     $('platform').textContent = `${status.platform} · ${status.instance}`;
     $('managed').textContent = status.managedFiles; rules = status.rules || []; $('selected').textContent = rules.length;
-    if (!status.imports) { $('collect-tab').disabled = true; $('collect-tab').title = 'Restart with -imports PATH to enable collection mode'; }
+    wildcardHistory = status.wildcards || []; renderWildcardHistory();
     window.treeData = await api('/api/tree'); renderTree(window.treeData);
+    if (!status.imports) { $('collect-tab').disabled = true; $('collect-tab').title = 'Restart with -imports PATH to enable collection mode'; await showMode('mirror'); }
+    else await showMode('collect');
   } catch (error) { showError($('message'), error); }
 }
 
@@ -136,7 +161,7 @@ $('collect-tab').onclick = () => showMode('collect');
 $('save').onclick = async () => { try { await api('/api/rules', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(rules) }); $('message').textContent = 'Choices saved. Preview the resulting changes.'; } catch (error) { showError($('message'), error); } };
 $('preview').onclick = async () => { try { await api('/api/rules', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(rules) }); lastPlan = renderPlanInto(await api('/api/plan', { method: 'POST' }), $('plan'), $('apply'), $('message')); } catch (error) { showError($('message'), error); } };
 $('apply').onclick = async () => { if (!lastPlan) return; try { lastPlan = renderPlanInto(await api('/api/apply', { method: 'POST' }), $('plan'), $('apply'), $('message')); const status = await api('/api/status'); $('managed').textContent = status.managedFiles; $('apply').disabled = true; $('message').textContent = 'Reconciliation complete.'; } catch (error) { showError($('message'), error); } };
-$('collect-preview').onclick = async () => { try { lastCollectPlan = renderPlanInto(await api('/api/collect/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(collectRequest()) }), $('collect-plan'), $('collect-apply'), $('collect-message'), 'Create collected links'); } catch (error) { showError($('collect-message'), error); } };
-$('collect-apply').onclick = async () => { if (!lastCollectPlan) return; try { lastCollectPlan = renderPlanInto(await api('/api/collect/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(collectRequest()) }), $('collect-plan'), $('collect-apply'), $('collect-message'), 'Created links'); $('collect-apply').disabled = true; $('collect-message').textContent = 'Collection complete.'; } catch (error) { showError($('collect-message'), error); } };
-for (const id of ['collect-pattern', 'collect-destination']) $(id).oninput = () => { lastCollectPlan = null; $('collect-apply').disabled = true; };
+$('collect-preview').onclick = async () => { try { const request = collectRequest(); lastCollectPlan = renderPlanInto(await api('/api/collect/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request) }), $('collect-plan'), $('collect-apply'), $('collect-message'), 'Create collected links'); rememberWildcard(request.pattern); } catch (error) { showError($('collect-message'), error); } };
+$('collect-apply').onclick = async () => { if (!lastCollectPlan) return; try { const request = collectRequest(); lastCollectPlan = renderPlanInto(await api('/api/collect/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request) }), $('collect-plan'), $('collect-apply'), $('collect-message'), 'Created links'); rememberWildcard(request.pattern); $('collect-apply').disabled = true; $('collect-message').textContent = 'Collection complete.'; } catch (error) { showError($('collect-message'), error); } };
+$('collect-pattern').oninput = () => { lastCollectPlan = null; $('collect-apply').disabled = true; };
 init();

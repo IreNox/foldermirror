@@ -2,7 +2,10 @@
 .mode-tab { background:transparent; color:var(--muted); }
 .mode-tab.active { background:var(--green); color:#092111; }
 .mode-tab:disabled { opacity:.4; }
+.collect-grid { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(280px,.8fr); gap:18px; }
 .collect-form { display:grid; gap:14px; padding:20px; border-bottom:1px solid var(--line); }
 .collect-form label { display:grid; gap:7px; color:var(--muted); font-size:12px; }
 .collect-form input { width:100%; border:1px solid var(--line); border-radius:9px; outline:none; background:var(--raised); color:var(--text); padding:11px 12px; font:13px ui-monospace,SFMono-Regular,Consolas,monospace; }
 .collect-form input:focus { border-color:var(--green); box-shadow:0 0 0 3px rgb(136 224 162 / 10%); }
+@media(max-width:1050px) { .collect-grid { grid-template-columns:1fr 1fr; } .collect-grid .run-panel { grid-column:1 / -1; } }
+@media(max-width:700px) { .collect-grid { grid-template-columns:1fr; } .collect-grid .run-panel { grid-column:auto; } }

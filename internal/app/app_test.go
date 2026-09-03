@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -141,7 +142,12 @@ func TestCollectPlanAndApplyPreserveRelativePaths(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	s := &server{source: storage, imports: imports}
+	s := &server{
+		source:    storage,
+		imports:   imports,
+		statePath: filepath.Join(root, "state.json"),
+		state:     State{Version: stateVersion, Files: map[string]FileRecord{}},
+	}
 	request := collectRequest{Folder: "show", Pattern: "*.mkv", Destination: "Media/Collected"}
 	p, err := s.makeCollectPlan(request)
 	if err != nil {
@@ -190,5 +196,31 @@ func TestCollectRejectsInvalidPathsAndPatterns(t *testing.T) {
 		if _, err := s.makeCollectPlan(request); err == nil {
 			t.Fatalf("expected rejection for %#v", request)
 		}
+	}
+}
+
+func TestWildcardHistoryIsRecentUniqueAndBounded(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "state.json")
+	s := &server{statePath: statePath, state: State{Version: stateVersion, Files: map[string]FileRecord{}}}
+	for i := 0; i < 14; i++ {
+		if err := s.rememberWildcard(fmt.Sprintf("*.type%d", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.rememberWildcard("*.type5"); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.state.Wildcards) != 12 {
+		t.Fatalf("history length = %d, want 12", len(s.state.Wildcards))
+	}
+	if s.state.Wildcards[0] != "*.type5" {
+		t.Fatalf("most recent wildcard = %q", s.state.Wildcards[0])
+	}
+	seen := map[string]bool{}
+	for _, wildcard := range s.state.Wildcards {
+		if seen[wildcard] {
+			t.Fatalf("duplicate wildcard %q", wildcard)
+		}
+		seen[wildcard] = true
 	}
 }
