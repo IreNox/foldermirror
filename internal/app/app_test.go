@@ -2,8 +2,10 @@ package app
 
 import (
 	"encoding/json"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -117,5 +119,76 @@ func TestEmptyPlanEncodesArrays(t *testing.T) {
 	}
 	if got, want := string(b), `{"create":[],"remove":[],"skip":[]}`; got != want {
 		t.Fatalf("empty plan JSON = %s, want %s", got, want)
+	}
+}
+
+func TestCollectPlanAndApplyPreserveRelativePaths(t *testing.T) {
+	root := t.TempDir()
+	storage := filepath.Join(root, "storage")
+	imports := filepath.Join(root, "imports")
+	for _, dir := range []string{storage, filepath.Join(imports, "show", "season-one")} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	files := map[string]string{
+		filepath.Join(imports, "show", "pilot.mkv"):                "pilot",
+		filepath.Join(imports, "show", "notes.txt"):                "notes",
+		filepath.Join(imports, "show", "season-one", "finale.mkv"): "finale",
+	}
+	for path, content := range files {
+		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := &server{source: storage, imports: imports}
+	request := collectRequest{Folder: "show", Pattern: "*.mkv", Destination: "Media/Collected"}
+	p, err := s.makeCollectPlan(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Create) != 2 {
+		t.Fatalf("create count = %d, want 2: %#v", len(p.Create), p)
+	}
+	if p.Create[0].Path != "Media/Collected/pilot.mkv" || p.Create[1].Path != "Media/Collected/season-one/finale.mkv" {
+		t.Fatalf("unexpected collected paths: %#v", p.Create)
+	}
+	body, _ := json.Marshal(request)
+	recorder := httptest.NewRecorder()
+	s.collectApply(recorder, httptest.NewRequest("POST", "/api/collect/apply", strings.NewReader(string(body))))
+	if recorder.Code != 200 {
+		t.Fatalf("apply status = %d: %s", recorder.Code, recorder.Body.String())
+	}
+	for sourcePath, destination := range map[string]string{
+		filepath.Join(imports, "show", "pilot.mkv"):                filepath.Join(storage, "Media", "Collected", "pilot.mkv"),
+		filepath.Join(imports, "show", "season-one", "finale.mkv"): filepath.Join(storage, "Media", "Collected", "season-one", "finale.mkv"),
+	} {
+		sourceInfo, err := os.Stat(sourcePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		destinationInfo, err := os.Stat(destination)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !os.SameFile(sourceInfo, destinationInfo) {
+			t.Fatalf("%s is not a hardlink", destination)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(storage, "Media", "Collected", "notes.txt")); !os.IsNotExist(err) {
+		t.Fatal("non-matching file was collected")
+	}
+}
+
+func TestCollectRejectsInvalidPathsAndPatterns(t *testing.T) {
+	s := &server{source: t.TempDir(), imports: t.TempDir()}
+	for _, request := range []collectRequest{
+		{Folder: "../outside", Pattern: "*", Destination: "safe"},
+		{Folder: "folder", Pattern: "sub/*.mkv", Destination: "safe"},
+		{Folder: "folder", Pattern: "*", Destination: "../outside"},
+	} {
+		if _, err := s.makeCollectPlan(request); err == nil {
+			t.Fatalf("expected rejection for %#v", request)
+		}
 	}
 }

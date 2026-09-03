@@ -25,7 +25,7 @@ var webFiles embed.FS
 const stateVersion = 1
 
 type Options struct {
-	Source, Target, Listen, StateFile string
+	Source, Target, Imports, Listen, StateFile string
 }
 
 type Rule struct {
@@ -51,6 +51,7 @@ type server struct {
 	state     State
 	token     string
 	instance  string
+	imports   string
 }
 
 type treeNode struct {
@@ -73,6 +74,12 @@ type plan struct {
 	Skip   []action `json:"skip"`
 }
 
+type collectRequest struct {
+	Folder      string `json:"folder"`
+	Pattern     string `json:"pattern"`
+	Destination string `json:"destination"`
+}
+
 func newPlan() plan {
 	return plan{Create: []action{}, Remove: []action{}, Skip: []action{}}
 }
@@ -80,23 +87,36 @@ func newPlan() plan {
 func Run(opts Options) error {
 	source, err := cleanExistingDir(opts.Source)
 	if err != nil {
-		return fmt.Errorf("source: %w", err)
+		return fmt.Errorf("storage: %w", err)
 	}
 	target, err := cleanOrCreateDir(opts.Target)
 	if err != nil {
-		return fmt.Errorf("target: %w", err)
+		return fmt.Errorf("mirror: %w", err)
 	}
 	if source == target || isWithin(source, target) || isWithin(target, source) {
-		return errors.New("source and target must be separate, non-nested directories")
+		return errors.New("storage and mirror must be separate, non-nested directories")
 	}
 	if !sameVolume(source, target) {
-		return errors.New("source and target must be on the same filesystem volume")
+		return errors.New("storage and mirror must be on the same filesystem volume")
+	}
+	imports := ""
+	if opts.Imports != "" {
+		imports, err = cleanExistingDir(opts.Imports)
+		if err != nil {
+			return fmt.Errorf("imports: %w", err)
+		}
+		if imports == source || isWithin(imports, source) || isWithin(source, imports) {
+			return errors.New("storage and imports must be separate, non-nested directories")
+		}
+		if !sameVolume(source, imports) {
+			return errors.New("storage and imports must be on the same filesystem volume")
+		}
 	}
 	statePath := opts.StateFile
 	if statePath == "" {
 		statePath = filepath.Join(target, ".foldermirror.json")
 	}
-	s := &server{source: source, target: target, statePath: statePath, state: State{Version: stateVersion, Files: map[string]FileRecord{}}, token: randomToken(), instance: randomToken()[:8]}
+	s := &server{source: source, target: target, imports: imports, statePath: statePath, state: State{Version: stateVersion, Files: map[string]FileRecord{}}, token: randomToken(), instance: randomToken()[:8]}
 	if err := s.load(); err != nil {
 		return err
 	}
@@ -107,6 +127,9 @@ func Run(opts Options) error {
 	mux.HandleFunc("PUT /api/rules", s.rules)
 	mux.HandleFunc("POST /api/plan", s.preview)
 	mux.HandleFunc("POST /api/apply", s.apply)
+	mux.HandleFunc("GET /api/collect/tree", s.collectTree)
+	mux.HandleFunc("POST /api/collect/plan", s.collectPreview)
+	mux.HandleFunc("POST /api/collect/apply", s.collectApply)
 	assets, _ := fs.Sub(webFiles, "web")
 	mux.Handle("/", http.FileServer(http.FS(assets)))
 
@@ -114,7 +137,7 @@ func Run(opts Options) error {
 	if err != nil {
 		return err
 	}
-	log.Printf("FolderMirror: http://%s", ln.Addr())
+	log.Printf("FolderMirror: http://%s (storage %s, mirror %s)", ln.Addr(), source, target)
 	return http.Serve(ln, securityHeaders(s.token, mux))
 }
 
@@ -201,13 +224,28 @@ func (s *server) save() error {
 func (s *server) status(w http.ResponseWriter, _ *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	writeJSON(w, map[string]any{"source": s.source, "target": s.target, "platform": runtime.GOOS, "instance": s.instance, "rules": s.state.Rules, "managedFiles": len(s.state.Files)})
+	writeJSON(w, map[string]any{"storage": s.source, "mirror": s.target, "imports": s.imports, "source": s.source, "target": s.target, "platform": runtime.GOOS, "instance": s.instance, "rules": s.state.Rules, "managedFiles": len(s.state.Files)})
 }
 
 func (s *server) tree(w http.ResponseWriter, _ *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	n, err := s.buildTree()
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, n)
+}
+
+func (s *server) collectTree(w http.ResponseWriter, _ *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.imports == "" {
+		http.Error(w, "collection mode requires the -imports option", http.StatusBadRequest)
+		return
+	}
+	n, err := buildPlainTree(s.imports)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -304,6 +342,60 @@ func (s *server) apply(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, result)
 }
 
+func (s *server) collectPreview(w http.ResponseWriter, r *http.Request) {
+	var request collectRequest
+	if err := decodeJSON(r, &request); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, err := s.makeCollectPlan(request)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, p)
+}
+
+func (s *server) collectApply(w http.ResponseWriter, r *http.Request) {
+	var request collectRequest
+	if err := decodeJSON(r, &request); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, err := s.makeCollectPlan(request)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	result := newPlan()
+	for _, a := range p.Create {
+		src, err := s.collectSourcePath(a.Detail)
+		if err != nil {
+			result.Skip = append(result.Skip, action{"error", a.Path, err.Error()})
+			continue
+		}
+		dst, err := safePathInside(s.source, filepath.Join(s.source, filepath.FromSlash(a.Path)))
+		if err != nil {
+			result.Skip = append(result.Skip, action{"error", a.Path, err.Error()})
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(dst), 0755); err == nil {
+			err = os.Link(src, dst)
+		}
+		if err != nil {
+			result.Skip = append(result.Skip, action{"error", a.Path, err.Error()})
+			continue
+		}
+		result.Create = append(result.Create, a)
+	}
+	result.Skip = append(result.Skip, p.Skip...)
+	writeJSON(w, result)
+}
+
 func (s *server) buildTree() (*treeNode, error) {
 	root := &treeNode{Path: "", Name: filepath.Base(s.source), Included: effective(s.state.Rules, "")}
 	nodes := map[string]*treeNode{"": root}
@@ -324,6 +416,33 @@ func (s *server) buildTree() (*treeNode, error) {
 		if explicit {
 			n.Explicit = &v
 		}
+		parent := slash(filepath.Dir(filepath.FromSlash(rel)))
+		if parent == "." {
+			parent = ""
+		}
+		nodes[parent].Children = append(nodes[parent].Children, n)
+		nodes[rel] = n
+		return nil
+	})
+	return root, err
+}
+
+func buildPlainTree(rootPath string) (*treeNode, error) {
+	root := &treeNode{Path: "", Name: filepath.Base(rootPath)}
+	nodes := map[string]*treeNode{"": root}
+	err := filepath.WalkDir(rootPath, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if path == rootPath || !d.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(rootPath, path)
+		if err != nil {
+			return err
+		}
+		rel = slash(rel)
+		n := &treeNode{Path: rel, Name: d.Name()}
 		parent := slash(filepath.Dir(filepath.FromSlash(rel)))
 		if parent == "." {
 			parent = ""
@@ -429,6 +548,154 @@ func (s *server) paths(rel string) (string, string, error) {
 		return "", "", errors.New("invalid relative path")
 	}
 	return filepath.Join(s.source, clean), filepath.Join(s.target, clean), nil
+}
+
+func (s *server) makeCollectPlan(request collectRequest) (plan, error) {
+	p := newPlan()
+	if s.imports == "" {
+		return p, errors.New("collection mode requires the -imports option")
+	}
+	folder, err := cleanRelative(request.Folder, false)
+	if err != nil {
+		return p, fmt.Errorf("folder: %w", err)
+	}
+	destination, err := cleanRelative(request.Destination, false)
+	if err != nil {
+		return p, fmt.Errorf("storage subfolder: %w", err)
+	}
+	pattern := strings.TrimSpace(request.Pattern)
+	if pattern == "" || strings.ContainsAny(pattern, `/\\`) {
+		return p, errors.New("pattern must be a filename wildcard without path separators")
+	}
+	if _, err := filepath.Match(pattern, "filename"); err != nil {
+		return p, fmt.Errorf("pattern: %w", err)
+	}
+	selected, err := cleanExistingDir(filepath.Join(s.imports, folder))
+	if err != nil {
+		return p, fmt.Errorf("selected import folder: %w", err)
+	}
+	if !isWithin(s.imports, selected) {
+		return p, errors.New("selected folder resolves outside the imports root")
+	}
+	destinationBase, err := safePathInside(s.source, filepath.Join(s.source, destination))
+	if err != nil {
+		return p, fmt.Errorf("storage subfolder: %w", err)
+	}
+	err = filepath.WalkDir(selected, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if path == selected || d.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(selected, path)
+		if err != nil {
+			return err
+		}
+		importRel, err := filepath.Rel(s.imports, path)
+		if err != nil {
+			return err
+		}
+		if d.Type()&os.ModeSymlink != 0 || !d.Type().IsRegular() {
+			p.Skip = append(p.Skip, action{"skip", slash(importRel), "not a regular file"})
+			return nil
+		}
+		matched, err := filepath.Match(pattern, d.Name())
+		if err != nil {
+			return err
+		}
+		if !matched {
+			return nil
+		}
+		dst, err := safePathInside(s.source, filepath.Join(destinationBase, rel))
+		if err != nil {
+			p.Skip = append(p.Skip, action{"conflict", slash(filepath.Join(destination, rel)), err.Error()})
+			return nil
+		}
+		sourceInfo, err := os.Stat(path)
+		if err != nil {
+			return err
+		}
+		destinationInfo, err := os.Stat(dst)
+		if errors.Is(err, os.ErrNotExist) {
+			p.Create = append(p.Create, action{"link", slash(filepath.Join(destination, rel)), slash(importRel)})
+			return nil
+		}
+		if err != nil {
+			p.Skip = append(p.Skip, action{"conflict", slash(filepath.Join(destination, rel)), err.Error()})
+			return nil
+		}
+		if !os.SameFile(sourceInfo, destinationInfo) {
+			p.Skip = append(p.Skip, action{"conflict", slash(filepath.Join(destination, rel)), "destination exists and is not the import file"})
+		}
+		return nil
+	})
+	if err != nil {
+		return p, err
+	}
+	sort.Slice(p.Create, func(i, j int) bool { return p.Create[i].Path < p.Create[j].Path })
+	sort.Slice(p.Skip, func(i, j int) bool { return p.Skip[i].Path < p.Skip[j].Path })
+	return p, nil
+}
+
+func (s *server) collectSourcePath(relative string) (string, error) {
+	clean, err := cleanRelative(relative, false)
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(s.imports, clean)
+	info, err := os.Lstat(path)
+	if err != nil {
+		return "", err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return "", errors.New("import source is no longer a regular file")
+	}
+	return safePathInside(s.imports, path)
+}
+
+func cleanRelative(path string, allowEmpty bool) (string, error) {
+	clean := filepath.Clean(filepath.FromSlash(strings.TrimSpace(path)))
+	if clean == "." {
+		if allowEmpty {
+			return "", nil
+		}
+		return "", errors.New("a subfolder is required")
+	}
+	if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "", errors.New("invalid relative path")
+	}
+	return clean, nil
+}
+
+func safePathInside(root, candidate string) (string, error) {
+	candidate = filepath.Clean(candidate)
+	if candidate != root && !isWithin(root, candidate) {
+		return "", errors.New("path escapes its configured root")
+	}
+	probe := candidate
+	for {
+		_, err := os.Lstat(probe)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+		parent := filepath.Dir(probe)
+		if parent == probe {
+			return "", errors.New("no existing parent directory")
+		}
+		probe = parent
+	}
+	resolved, err := filepath.EvalSymlinks(probe)
+	if err != nil {
+		return "", err
+	}
+	if resolved != root && !isWithin(root, resolved) {
+		return "", errors.New("path resolves outside its configured root")
+	}
+	return candidate, nil
 }
 
 func normalizeRules(in []Rule) ([]Rule, error) {
