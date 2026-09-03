@@ -1,0 +1,9 @@
+/foldermirror
+/foldermirror.exe
+/foldermirror.exe~
+/.direnv
+/result
+/.toolchain
+/.go-toolchain.zip
+/.cache
+/foldermirror-linux-*

@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>FolderMirror</title><meta name="description" content="Selectively mirror folders with hardlinks.">
+  <link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/tree.css">
+</head>
+<body>
+  <main>
+    <header><div class="brand"><span class="mark">FM</span><div><h1>FolderMirror</h1><p>Selective hardlink workspace</p></div></div><span id="platform" class="pill">Loading</span></header>
+    <section class="paths"><div><label>Source</label><code id="source">—</code></div><span class="arrow">→</span><div><label>Mirror</label><code id="target">—</code></div></section>
+    <div class="grid">
+      <section class="panel tree-panel"><div class="panel-head"><div><h2>Choose folders</h2><p>Child choices override their parents.</p></div><button id="save" class="secondary">Save choices</button></div><div id="tree" class="tree"><div class="empty">Scanning folders…</div></div></section>
+      <section class="panel run-panel"><div class="panel-head"><div><h2>Reconcile</h2><p>Review changes before touching the mirror.</p></div></div><div class="summary"><div><strong id="managed">0</strong><span>managed files</span></div><div><strong id="selected">0</strong><span>folder rules</span></div></div><div class="actions"><button id="preview">Preview changes</button><button id="apply" class="danger" disabled>Apply plan</button></div><div id="message" role="status" class="message">Save your choices, then preview.</div><div id="plan" class="plan"></div></section>
+    </div>
+  </main>
+  <script src="/app.js" defer></script>
+</body></html>
