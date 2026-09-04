@@ -76,13 +76,15 @@ function collectNodeView(node) {
 }
 
 function storageNodeView(node) {
-  const toggle = foldButton(node, storageExpanded, () => renderStorageTree(window.treeData));
+  const toggle = foldButton(node, storageExpanded, () => renderStorageTree(window.storageTreeData));
   const radio = document.createElement('input');
   radio.type = 'radio'; radio.name = 'collect-destination'; radio.checked = $('collect-destination').value === node.path;
   radio.setAttribute('aria-label', `Collect into ${node.name}`);
-  radio.onchange = () => { $('collect-destination').value = node.path; lastCollectPlan = null; $('collect-apply').disabled = true; renderStorageTree(window.treeData); };
+  radio.onchange = () => { $('collect-destination').value = node.path; lastCollectPlan = null; $('collect-apply').disabled = true; renderStorageTree(window.storageTreeData); };
   const label = document.createElement('label'); label.textContent = node.name; label.onclick = () => radio.click();
-  const row = document.createElement('div'); row.className = 'node-row'; row.append(toggle, radio, label);
+  const add = document.createElement('button'); add.type = 'button'; add.className = 'new-child-folder'; add.textContent = '+'; add.setAttribute('aria-label', `Create folder inside ${node.name}`);
+  add.onclick = () => beginFolderCreate(node.path);
+  const row = document.createElement('div'); row.className = 'node-row'; row.append(toggle, radio, label, add);
   return wrapNode(node, row, storageExpanded.has(node.path), storageNodeView);
 }
 
@@ -127,6 +129,15 @@ function rememberWildcard(pattern) {
   wildcardHistory = [pattern, ...wildcardHistory.filter(item => item !== pattern)].slice(0, 12);
   renderWildcardHistory();
 }
+
+function beginFolderCreate(parent) {
+  const form = $('new-folder-form');
+  form.dataset.parent = parent;
+  $('new-folder-parent').textContent = parent || 'Storage root';
+  $('new-folder-name').value = '';
+  form.hidden = false;
+  $('new-folder-name').focus();
+}
 function renderWildcardHistory() {
   const list = $('wildcard-history'); list.replaceChildren();
   for (const item of wildcardHistory) { const option = document.createElement('option'); option.value = item; list.append(option); }
@@ -138,7 +149,10 @@ async function showMode(mode) {
   $('mirror-tab').classList.toggle('active', !collect); $('collect-tab').classList.toggle('active', collect);
   $('mirror-tab').setAttribute('aria-selected', String(!collect)); $('collect-tab').setAttribute('aria-selected', String(collect));
   if (collect && !collectLoaded && !$('collect-tab').disabled) {
-    try { window.collectTreeData = await api('/api/collect/tree'); renderCollectTree(window.collectTreeData); renderStorageTree(window.treeData); collectLoaded = true; }
+    try {
+      [window.collectTreeData, window.storageTreeData] = await Promise.all([api('/api/collect/tree'), api('/api/storage/tree')]);
+      renderCollectTree(window.collectTreeData); renderStorageTree(window.storageTreeData); collectLoaded = true;
+    }
     catch (error) { showError($('collect-message'), error); }
   }
 }
@@ -165,4 +179,19 @@ $('apply').onclick = async () => { if (!lastPlan) return; try { lastPlan = rende
 $('collect-preview').onclick = async () => { try { const request = collectRequest(); lastCollectPlan = renderPlanInto(await api('/api/collect/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request) }), $('collect-plan'), $('collect-apply'), $('collect-message'), 'Create collected links'); rememberWildcard(request.pattern); } catch (error) { showError($('collect-message'), error); } };
 $('collect-apply').onclick = async () => { if (!lastCollectPlan) return; try { const request = collectRequest(); lastCollectPlan = renderPlanInto(await api('/api/collect/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request) }), $('collect-plan'), $('collect-apply'), $('collect-message'), 'Created links'); rememberWildcard(request.pattern); $('collect-apply').disabled = true; $('collect-message').textContent = 'Collection complete.'; } catch (error) { showError($('collect-message'), error); } };
 $('collect-pattern').oninput = () => { lastCollectPlan = null; $('collect-apply').disabled = true; };
+$('new-root-folder').onclick = () => beginFolderCreate('');
+$('cancel-new-folder').onclick = () => { $('new-folder-form').hidden = true; };
+$('new-folder-form').onsubmit = async event => {
+  event.preventDefault();
+  const form = $('new-folder-form');
+  try {
+    const response = await api('/api/storage/folders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ parent: form.dataset.parent || '', name: $('new-folder-name').value }) });
+    window.storageTreeData = response.tree;
+    if (form.dataset.parent) storageExpanded.add(form.dataset.parent);
+    $('collect-destination').value = response.path;
+    lastCollectPlan = null; $('collect-apply').disabled = true; form.hidden = true;
+    renderStorageTree(window.storageTreeData);
+    $('collect-message').textContent = `Created storage folder ${response.path}.`;
+  } catch (error) { showError($('collect-message'), error); }
+};
 init();

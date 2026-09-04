@@ -286,3 +286,36 @@ func TestCollectRootWithCaseInsensitiveWildcard(t *testing.T) {
 		t.Fatalf("unexpected root collection paths: %#v", p.Create)
 	}
 }
+
+func TestCreateStorageFolderAtRootAndNested(t *testing.T) {
+	storage := t.TempDir()
+	s := &server{source: storage}
+	create := func(parent, name string) *httptest.ResponseRecorder {
+		t.Helper()
+		body, _ := json.Marshal(createFolderRequest{Parent: parent, Name: name})
+		recorder := httptest.NewRecorder()
+		s.createStorageFolder(recorder, httptest.NewRequest("POST", "/api/storage/folders", strings.NewReader(string(body))))
+		return recorder
+	}
+	if recorder := create("", "Movies"); recorder.Code != 200 {
+		t.Fatalf("root create status = %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if recorder := create("Movies", "Incoming"); recorder.Code != 200 {
+		t.Fatalf("nested create status = %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if info, err := os.Stat(filepath.Join(storage, "Movies", "Incoming")); err != nil || !info.IsDir() {
+		t.Fatalf("nested folder was not created: %v", err)
+	}
+	for _, request := range []createFolderRequest{
+		{Parent: "../outside", Name: "bad"},
+		{Parent: "", Name: "nested/bad"},
+		{Parent: "Movies", Name: "Incoming"},
+	} {
+		body, _ := json.Marshal(request)
+		recorder := httptest.NewRecorder()
+		s.createStorageFolder(recorder, httptest.NewRequest("POST", "/api/storage/folders", strings.NewReader(string(body))))
+		if recorder.Code < 400 {
+			t.Fatalf("unsafe or duplicate folder request accepted: %#v", request)
+		}
+	}
+}

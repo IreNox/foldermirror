@@ -16,7 +16,14 @@
       <section class="paths"><div><label>Imports</label><code id="imports">Not configured</code></div><span class="arrow">→</span><div><label>Storage</label><code id="collect-storage">—</code></div></section>
       <div class="collect-grid">
         <section class="panel tree-panel"><div class="panel-head"><div><h2>Choose import folder</h2><p>The selected folder is scanned recursively.</p></div></div><div id="collect-tree" class="tree"><div class="empty">Open this mode to scan folders.</div></div></section>
-        <section class="panel tree-panel"><div class="panel-head"><div><h2>Choose storage folder</h2><p>Matching files are linked beneath it.</p></div></div><div id="collect-storage-tree" class="tree"><div class="empty">Scanning storage folders…</div></div></section>
+        <section class="panel tree-panel">
+          <div class="panel-head"><div><h2>Choose storage folder</h2><p>Matching files are linked beneath it.</p></div><button id="new-root-folder" class="secondary">New folder</button></div>
+          <form id="new-folder-form" class="folder-create" hidden>
+            <label>Inside <strong id="new-folder-parent">Storage root</strong></label>
+            <div><input id="new-folder-name" required placeholder="Folder name"><button type="submit">Create</button><button id="cancel-new-folder" type="button" class="secondary">Cancel</button></div>
+          </form>
+          <div id="collect-storage-tree" class="tree"><div class="empty">Scanning storage folders…</div></div>
+        </section>
         <section class="panel run-panel">
           <div class="panel-head"><div><h2>Collect matching files</h2><p>Relative folders beneath the import selection are preserved.</p></div></div>
           <form id="collect-form" class="collect-form">

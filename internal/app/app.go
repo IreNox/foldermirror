@@ -82,6 +82,11 @@ type collectRequest struct {
 	Destination string `json:"destination"`
 }
 
+type createFolderRequest struct {
+	Parent string `json:"parent"`
+	Name   string `json:"name"`
+}
+
 func newPlan() plan {
 	return plan{Create: []action{}, Remove: []action{}, Skip: []action{}}
 }
@@ -132,6 +137,8 @@ func Run(opts Options) error {
 	mux.HandleFunc("GET /api/collect/tree", s.collectTree)
 	mux.HandleFunc("POST /api/collect/plan", s.collectPreview)
 	mux.HandleFunc("POST /api/collect/apply", s.collectApply)
+	mux.HandleFunc("GET /api/storage/tree", s.storageTree)
+	mux.HandleFunc("POST /api/storage/folders", s.createStorageFolder)
 	assets, _ := fs.Sub(webFiles, "web")
 	mux.Handle("/", http.FileServer(http.FS(assets)))
 
@@ -253,6 +260,67 @@ func (s *server) collectTree(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	writeJSON(w, n)
+}
+
+func (s *server) storageTree(w http.ResponseWriter, _ *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tree, err := buildPlainTree(s.source)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, tree)
+}
+
+func (s *server) createStorageFolder(w http.ResponseWriter, r *http.Request) {
+	var request createFolderRequest
+	if err := decodeJSON(r, &request); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	parent, err := cleanRelative(request.Parent, true)
+	if err != nil {
+		http.Error(w, "parent: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	name := strings.TrimSpace(request.Name)
+	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\\`) || filepath.Base(name) != name {
+		http.Error(w, "name must be one folder name without path separators", http.StatusBadRequest)
+		return
+	}
+	parentPath, err := safePathInside(s.source, filepath.Join(s.source, parent))
+	if err != nil {
+		http.Error(w, "parent: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	info, err := os.Stat(parentPath)
+	if err != nil || !info.IsDir() {
+		http.Error(w, "parent folder does not exist", http.StatusBadRequest)
+		return
+	}
+	createdPath, err := safePathInside(s.source, filepath.Join(parentPath, name))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := os.Mkdir(createdPath, 0755); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			http.Error(w, "a file or folder with that name already exists", http.StatusConflict)
+			return
+		}
+		writeError(w, err)
+		return
+	}
+	tree, err := buildPlainTree(s.source)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	createdRelative, _ := filepath.Rel(s.source, createdPath)
+	writeJSON(w, map[string]any{"path": slash(createdRelative), "tree": tree})
 }
 
 func (s *server) rules(w http.ResponseWriter, r *http.Request) {
