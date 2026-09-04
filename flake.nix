@@ -8,6 +8,8 @@
       systems = [ "x86_64-linux" "aarch64-linux" ];
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f (import nixpkgs { inherit system; }));
     in {
+      nixosModules.default = import ./nix/module.nix { inherit self; };
+
       packages = forAllSystems (pkgs: {
         default = pkgs.buildGoModule {
           pname = "foldermirror";

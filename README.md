@@ -27,7 +27,7 @@ go run . -storage D:\Media -mirror D:\MediaView -imports D:\Downloads
 
 Build a standalone executable with `go build -o foldermirror .` (or `go build -o foldermirror.exe .` on Windows).
 
-## NixOS
+## Nix and NixOS
 
 Run directly from the repository:
 
@@ -35,7 +35,38 @@ Run directly from the repository:
 nix run . -- -storage /data/library -mirror /data/mirror -imports /data/downloads
 ```
 
-Or install the flake package into a system or Home Manager configuration. The application uses only Go's standard library and has no runtime dependencies.
+The flake also exports a reusable NixOS module. Add FolderMirror to your server flake inputs:
+
+```nix
+{
+  inputs.foldermirror = {
+    url = "github:YOURNAME/foldermirror";
+    inputs.nixpkgs.follows = "nixpkgs";
+  };
+
+  outputs = { nixpkgs, foldermirror, ... }: {
+    nixosConfigurations.my-server = nixpkgs.lib.nixosSystem {
+      system = "x86_64-linux";
+      modules = [
+        foldermirror.nixosModules.default
+        {
+          services.foldermirror = {
+            enable = true;
+            storage = "/srv/media/storage";
+            mirror = "/srv/media/mirror";
+            imports = "/srv/media/imports";
+            extraGroups = [ "media" ];
+          };
+        }
+      ];
+    };
+  };
+}
+```
+
+The service creates and runs as the `foldermirror` system user by default. The configured directories must exist, be on the same filesystem, and give that user (or one of `extraGroups`) the necessary access. Storage and mirror need write access; imports needs read access. Set `createUser = false` together with `user` and `group` to run under an existing account.
+
+The web interface still listens only on `127.0.0.1:8787` by default. Use an SSH tunnel or an authenticated reverse proxy rather than exposing it directly, because FolderMirror has no login screen. The application uses only Go's standard library and has no runtime dependencies.
 
 State is stored as `.foldermirror.json` inside the mirror by default. Folder rules use nearest-parent inheritance: selecting a parent includes its descendants, while a child folder or individual file can be explicitly excluded (and vice versa).
 
