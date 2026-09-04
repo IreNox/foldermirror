@@ -311,7 +311,7 @@ func (s *server) createStorageFolder(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "a file or folder with that name already exists", http.StatusConflict)
 			return
 		}
-		writeError(w, err)
+		writeError(w, fmt.Errorf("create folder: %w", err))
 		return
 	}
 	tree, err := buildPlainTree(s.source)
@@ -370,11 +370,12 @@ func (s *server) apply(w http.ResponseWriter, _ *http.Request) {
 			result.Skip = append(result.Skip, action{"error", a.Path, err.Error()})
 			continue
 		}
-		if err := os.MkdirAll(filepath.Dir(dst), 0755); err == nil {
-			err = os.Link(src, dst)
+		if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+			result.Skip = append(result.Skip, action{"error", a.Path, "create parent folders: " + err.Error()})
+			continue
 		}
-		if err != nil {
-			result.Skip = append(result.Skip, action{"error", a.Path, err.Error()})
+		if err := os.Link(src, dst); err != nil {
+			result.Skip = append(result.Skip, action{"error", a.Path, "create hardlink: " + err.Error()})
 			continue
 		}
 		id, err := fileIdentity(dst)
@@ -461,11 +462,12 @@ func (s *server) collectApply(w http.ResponseWriter, r *http.Request) {
 			result.Skip = append(result.Skip, action{"error", a.Path, err.Error()})
 			continue
 		}
-		if err := os.MkdirAll(filepath.Dir(dst), 0755); err == nil {
-			err = os.Link(src, dst)
+		if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+			result.Skip = append(result.Skip, action{"error", a.Path, "create parent folders: " + err.Error()})
+			continue
 		}
-		if err != nil {
-			result.Skip = append(result.Skip, action{"error", a.Path, err.Error()})
+		if err := os.Link(src, dst); err != nil {
+			result.Skip = append(result.Skip, action{"error", a.Path, "create hardlink: " + err.Error()})
 			continue
 		}
 		result.Create = append(result.Create, a)

@@ -108,6 +108,8 @@ function renderTree(tree) { renderRoots($('tree'), tree, mirrorNodeView, 'The st
 function renderCollectTree(tree) { $('collect-tree').replaceChildren(collectNodeView(tree)); }
 function renderStorageTree(tree) { renderRoots($('collect-storage-tree'), tree, storageNodeView, 'The storage folder has no subfolders.'); }
 function normalizedPlan(plan) { return { create: plan.create || [], remove: plan.remove || [], skip: plan.skip || [] }; }
+function planErrorCount(plan) { return plan.skip.filter(action => action.kind === 'error').length; }
+function showMessage(element, text, error = false) { element.textContent = text; element.className = `message${error ? ' error' : ''}`; }
 
 function renderPlanInto(plan, host, applyButton, message, createTitle = 'Create links') {
   plan = normalizedPlan(plan); host.replaceChildren();
@@ -118,12 +120,23 @@ function renderPlanInto(plan, host, applyButton, message, createTitle = 'Create 
   }
   const changes = plan.create.length + plan.remove.length;
   applyButton.disabled = changes === 0;
-  message.textContent = changes ? `${changes} safe change${changes === 1 ? '' : 's'} ready to apply.` : 'Everything is up to date.';
+  const errors = planErrorCount(plan);
+  if (errors) showMessage(message, `${errors} error${errors === 1 ? '' : 's'} need attention.`, true);
+  else showMessage(message, changes ? `${changes} safe change${changes === 1 ? '' : 's'} ready to apply.` : 'Everything is up to date.');
   return plan;
 }
 
 function collectRequest() { const folder = $('collect-folder').value; return { folder: folder === '.' ? '' : folder, pattern: $('collect-pattern').value, destination: $('collect-destination').value }; }
-function showError(element, error) { element.textContent = error.message; element.className = 'message error'; }
+function showError(element, error) { showMessage(element, error.message, true); }
+function showApplyResult(element, plan, successText) {
+  const errors = planErrorCount(plan);
+  showMessage(element, errors ? `${errors} action${errors === 1 ? '' : 's'} failed. Successful changes were kept; see Needs attention below.` : successText, errors > 0);
+}
+async function reloadStorageViews() {
+  [window.treeData, window.storageTreeData] = await Promise.all([api('/api/tree'), api('/api/storage/tree')]);
+  renderTree(window.treeData);
+  renderStorageTree(window.storageTreeData);
+}
 function rememberWildcard(pattern) {
   pattern = pattern.trim();
   wildcardHistory = [pattern, ...wildcardHistory.filter(item => item !== pattern)].slice(0, 12);
@@ -155,6 +168,10 @@ async function showMode(mode) {
     }
     catch (error) { showError($('collect-message'), error); }
   }
+  else if (!collect && window.treeData) {
+    try { window.treeData = await api('/api/tree'); renderTree(window.treeData); }
+    catch (error) { showError($('message'), error); }
+  }
 }
 
 async function init() {
@@ -173,11 +190,11 @@ async function init() {
 
 $('mirror-tab').onclick = () => showMode('mirror');
 $('collect-tab').onclick = () => showMode('collect');
-$('save').onclick = async () => { try { await api('/api/rules', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(rules) }); $('message').textContent = 'Choices saved. Preview the resulting changes.'; } catch (error) { showError($('message'), error); } };
+$('save').onclick = async () => { try { await api('/api/rules', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(rules) }); showMessage($('message'), 'Choices saved. Preview the resulting changes.'); } catch (error) { showError($('message'), error); } };
 $('preview').onclick = async () => { try { await api('/api/rules', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(rules) }); lastPlan = renderPlanInto(await api('/api/plan', { method: 'POST' }), $('plan'), $('apply'), $('message')); } catch (error) { showError($('message'), error); } };
-$('apply').onclick = async () => { if (!lastPlan) return; try { lastPlan = renderPlanInto(await api('/api/apply', { method: 'POST' }), $('plan'), $('apply'), $('message')); const status = await api('/api/status'); $('managed').textContent = status.managedFiles; $('apply').disabled = true; $('message').textContent = 'Reconciliation complete.'; } catch (error) { showError($('message'), error); } };
+$('apply').onclick = async () => { if (!lastPlan) return; try { lastPlan = renderPlanInto(await api('/api/apply', { method: 'POST' }), $('plan'), $('apply'), $('message')); const status = await api('/api/status'); $('managed').textContent = status.managedFiles; $('apply').disabled = true; showApplyResult($('message'), lastPlan, 'Reconciliation complete.'); } catch (error) { showError($('message'), error); } };
 $('collect-preview').onclick = async () => { try { const request = collectRequest(); lastCollectPlan = renderPlanInto(await api('/api/collect/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request) }), $('collect-plan'), $('collect-apply'), $('collect-message'), 'Create collected links'); rememberWildcard(request.pattern); } catch (error) { showError($('collect-message'), error); } };
-$('collect-apply').onclick = async () => { if (!lastCollectPlan) return; try { const request = collectRequest(); lastCollectPlan = renderPlanInto(await api('/api/collect/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request) }), $('collect-plan'), $('collect-apply'), $('collect-message'), 'Created links'); rememberWildcard(request.pattern); $('collect-apply').disabled = true; $('collect-message').textContent = 'Collection complete.'; } catch (error) { showError($('collect-message'), error); } };
+$('collect-apply').onclick = async () => { if (!lastCollectPlan) return; try { const request = collectRequest(); lastCollectPlan = renderPlanInto(await api('/api/collect/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request) }), $('collect-plan'), $('collect-apply'), $('collect-message'), 'Created links'); rememberWildcard(request.pattern); $('collect-apply').disabled = true; await reloadStorageViews(); showApplyResult($('collect-message'), lastCollectPlan, 'Collection complete.'); } catch (error) { showError($('collect-message'), error); } };
 $('collect-pattern').oninput = () => { lastCollectPlan = null; $('collect-apply').disabled = true; };
 $('new-root-folder').onclick = () => beginFolderCreate('');
 $('cancel-new-folder').onclick = () => { $('new-folder-form').hidden = true; };
@@ -191,7 +208,8 @@ $('new-folder-form').onsubmit = async event => {
     $('collect-destination').value = response.path;
     lastCollectPlan = null; $('collect-apply').disabled = true; form.hidden = true;
     renderStorageTree(window.storageTreeData);
-    $('collect-message').textContent = `Created storage folder ${response.path}.`;
+    window.treeData = await api('/api/tree'); renderTree(window.treeData);
+    showMessage($('collect-message'), `Created storage folder ${response.path}.`);
   } catch (error) { showError($('collect-message'), error); }
 };
 init();
