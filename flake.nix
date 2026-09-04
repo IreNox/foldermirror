@@ -19,7 +19,11 @@
         };
       });
       apps = forAllSystems (pkgs: {
-        default = { type = "app"; program = "${self.packages.${pkgs.system}.default}/bin/foldermirror"; };
+        default = {
+          type = "app";
+          program = "${self.packages.${pkgs.stdenv.hostPlatform.system}.default}/bin/foldermirror";
+          meta.description = "Organize a storage tree with selective hardlink mirrors";
+        };
       });
       devShells = forAllSystems (pkgs: { default = pkgs.mkShell { packages = [ pkgs.go pkgs.gopls ]; }; });
     };

@@ -2,6 +2,8 @@
 
 FolderMirror is a local web tool for organizing a storage tree with hardlinks. It can build a selective mirror and collect wildcard-matched files from a separate imports tree.
 
+> **Development note:** This program is completely vibe coded.
+
 ## Safety and limits
 
 - Storage, mirror, and optional imports roots must be separate directories on the same filesystem/volume.
