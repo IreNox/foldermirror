@@ -107,7 +107,7 @@ in
       documentation = [ "https://github.com/IreNox/foldermirror" ];
       wantedBy = [ "multi-user.target" ];
       after = [ "local-fs.target" ];
-      requiresMountsFor = [ cfg.storage cfg.mirror ]
+      unitConfig.RequiresMountsFor = [ cfg.storage cfg.mirror ]
         ++ lib.optional (cfg.imports != null) cfg.imports
         ++ lib.optional (cfg.stateFile != null) (builtins.dirOf cfg.stateFile);
 
