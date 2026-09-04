@@ -16,6 +16,11 @@
           version = "0.1.0";
           src = self;
           vendorHash = null;
+          meta = {
+            description = "Organize a storage tree with selective hardlink mirrors";
+            homepage = "https://github.com/IreNox/foldermirror";
+            mainProgram = "foldermirror";
+          };
         };
       });
       apps = forAllSystems (pkgs: {
