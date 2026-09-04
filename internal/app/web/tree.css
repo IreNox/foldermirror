@@ -26,3 +26,7 @@
   opacity: 0;
   pointer-events: none;
 }
+
+.file-node label {
+  color: #c9d4cc;
+}

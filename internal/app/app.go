@@ -56,11 +56,12 @@ type server struct {
 }
 
 type treeNode struct {
-	Path     string      `json:"path"`
-	Name     string      `json:"name"`
-	Included bool        `json:"included"`
-	Explicit *bool       `json:"explicit,omitempty"`
-	Children []*treeNode `json:"children,omitempty"`
+	Path      string      `json:"path"`
+	Name      string      `json:"name"`
+	Directory bool        `json:"directory"`
+	Included  bool        `json:"included"`
+	Explicit  *bool       `json:"explicit,omitempty"`
+	Children  []*treeNode `json:"children,omitempty"`
 }
 
 type action struct {
@@ -406,22 +407,25 @@ func (s *server) collectApply(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) buildTree() (*treeNode, error) {
-	root := &treeNode{Path: "", Name: filepath.Base(s.source), Included: effective(s.state.Rules, "")}
+	root := &treeNode{Path: "", Name: filepath.Base(s.source), Directory: true, Included: effective(s.state.Rules, "")}
 	nodes := map[string]*treeNode{"": root}
 	err := filepath.WalkDir(s.source, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if path == s.source || !d.IsDir() {
+		if path == s.source {
 			return nil
 		}
 		if d.Type()&os.ModeSymlink != 0 {
-			return filepath.SkipDir
+			return nil
+		}
+		if !d.IsDir() && !d.Type().IsRegular() {
+			return nil
 		}
 		rel, _ := filepath.Rel(s.source, path)
 		rel = slash(rel)
 		v, explicit := ruleValue(s.state.Rules, rel)
-		n := &treeNode{Path: rel, Name: d.Name(), Included: effective(s.state.Rules, rel)}
+		n := &treeNode{Path: rel, Name: d.Name(), Directory: d.IsDir(), Included: effective(s.state.Rules, rel)}
 		if explicit {
 			n.Explicit = &v
 		}
@@ -430,14 +434,16 @@ func (s *server) buildTree() (*treeNode, error) {
 			parent = ""
 		}
 		nodes[parent].Children = append(nodes[parent].Children, n)
-		nodes[rel] = n
+		if d.IsDir() {
+			nodes[rel] = n
+		}
 		return nil
 	})
 	return root, err
 }
 
 func buildPlainTree(rootPath string) (*treeNode, error) {
-	root := &treeNode{Path: "", Name: filepath.Base(rootPath)}
+	root := &treeNode{Path: "", Name: filepath.Base(rootPath) + " (root)", Directory: true}
 	nodes := map[string]*treeNode{"": root}
 	err := filepath.WalkDir(rootPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -451,7 +457,7 @@ func buildPlainTree(rootPath string) (*treeNode, error) {
 			return err
 		}
 		rel = slash(rel)
-		n := &treeNode{Path: rel, Name: d.Name()}
+		n := &treeNode{Path: rel, Name: d.Name(), Directory: true}
 		parent := slash(filepath.Dir(filepath.FromSlash(rel)))
 		if parent == "." {
 			parent = ""
@@ -485,7 +491,7 @@ func (s *server) makePlan() (plan, map[string]FileRecord, error) {
 			}
 			return nil
 		}
-		if !effective(s.state.Rules, slash(filepath.Dir(relOS))) {
+		if !effective(s.state.Rules, rel) {
 			return nil
 		}
 		if d.Type()&os.ModeSymlink != 0 || !d.Type().IsRegular() {
@@ -564,7 +570,7 @@ func (s *server) makeCollectPlan(request collectRequest) (plan, error) {
 	if s.imports == "" {
 		return p, errors.New("collection mode requires the -imports option")
 	}
-	folder, err := cleanRelative(request.Folder, false)
+	folder, err := cleanRelative(request.Folder, true)
 	if err != nil {
 		return p, fmt.Errorf("folder: %w", err)
 	}
@@ -576,14 +582,14 @@ func (s *server) makeCollectPlan(request collectRequest) (plan, error) {
 	if pattern == "" || strings.ContainsAny(pattern, `/\\`) {
 		return p, errors.New("pattern must be a filename wildcard without path separators")
 	}
-	if _, err := filepath.Match(pattern, "filename"); err != nil {
+	if _, err := matchWildcard(pattern, "filename"); err != nil {
 		return p, fmt.Errorf("pattern: %w", err)
 	}
 	selected, err := cleanExistingDir(filepath.Join(s.imports, folder))
 	if err != nil {
 		return p, fmt.Errorf("selected import folder: %w", err)
 	}
-	if !isWithin(s.imports, selected) {
+	if selected != s.imports && !isWithin(s.imports, selected) {
 		return p, errors.New("selected folder resolves outside the imports root")
 	}
 	destinationBase, err := safePathInside(s.source, filepath.Join(s.source, destination))
@@ -609,7 +615,7 @@ func (s *server) makeCollectPlan(request collectRequest) (plan, error) {
 			p.Skip = append(p.Skip, action{"skip", slash(importRel), "not a regular file"})
 			return nil
 		}
-		matched, err := filepath.Match(pattern, d.Name())
+		matched, err := matchWildcard(pattern, d.Name())
 		if err != nil {
 			return err
 		}
@@ -676,6 +682,10 @@ func (s *server) rememberWildcard(pattern string) error {
 	}
 	s.state.Wildcards = wildcards
 	return s.save()
+}
+
+func matchWildcard(pattern, name string) (bool, error) {
+	return filepath.Match(strings.ToLower(pattern), strings.ToLower(name))
 }
 
 func cleanRelative(path string, allowEmpty bool) (string, error) {

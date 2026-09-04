@@ -224,3 +224,65 @@ func TestWildcardHistoryIsRecentUniqueAndBounded(t *testing.T) {
 		seen[wildcard] = true
 	}
 }
+
+func TestMirrorCanSelectSingleFile(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "storage")
+	target := filepath.Join(root, "mirror")
+	if err := os.MkdirAll(filepath.Join(source, "album"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(target, 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"one.flac", "two.flac"} {
+		if err := os.WriteFile(filepath.Join(source, "album", name), []byte(name), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := &server{source: source, target: target, state: State{Rules: []Rule{{Path: "album/one.flac", Include: true}}, Files: map[string]FileRecord{}}}
+	p, _, err := s.makePlan()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Create) != 1 || p.Create[0].Path != "album/one.flac" {
+		t.Fatalf("single-file plan = %#v", p.Create)
+	}
+	tree, err := s.buildTree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tree.Children) != 1 || len(tree.Children[0].Children) != 2 {
+		t.Fatalf("mirror tree does not contain files: %#v", tree)
+	}
+	if tree.Children[0].Children[0].Directory || tree.Children[0].Children[1].Directory {
+		t.Fatal("regular files were marked as directories")
+	}
+}
+
+func TestCollectRootWithCaseInsensitiveWildcard(t *testing.T) {
+	root := t.TempDir()
+	storage := filepath.Join(root, "storage")
+	imports := filepath.Join(root, "imports")
+	for _, dir := range []string{filepath.Join(storage, "destination"), filepath.Join(imports, "nested")} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, path := range []string{filepath.Join(imports, "movie.MKV"), filepath.Join(imports, "nested", "episode.mkv")} {
+		if err := os.WriteFile(path, []byte("video"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := &server{source: storage, imports: imports}
+	p, err := s.makeCollectPlan(collectRequest{Folder: "", Pattern: "*.MkV", Destination: "destination"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Create) != 2 {
+		t.Fatalf("case-insensitive root plan = %#v", p)
+	}
+	if p.Create[0].Path != "destination/movie.MKV" || p.Create[1].Path != "destination/nested/episode.mkv" {
+		t.Fatalf("unexpected root collection paths: %#v", p.Create)
+	}
+}

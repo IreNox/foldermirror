@@ -57,8 +57,8 @@ function mirrorNodeView(node) {
   box.type = 'checkbox'; box.checked = effective(node.path); box.setAttribute('aria-label', `Mirror ${node.name}`);
   box.onchange = () => { setRule(node.path, box.checked); renderTree(window.treeData); };
   const label = document.createElement('label'); label.textContent = node.name;
-  label.onclick = () => { if (node.children?.length) toggle.click(); };
-  const row = document.createElement('div'); row.className = 'node-row'; row.append(toggle, box, label);
+  label.onclick = () => { if (node.children?.length) toggle.click(); else box.click(); };
+  const row = document.createElement('div'); row.className = `node-row ${node.directory ? 'folder-node' : 'file-node'}`; row.append(toggle, box, label);
   if (explicit(node.path)) { const badge = document.createElement('span'); badge.className = 'override'; badge.textContent = 'override'; row.append(badge); }
   return wrapNode(node, row, expanded.has(node.path), mirrorNodeView);
 }
@@ -66,9 +66,10 @@ function mirrorNodeView(node) {
 function collectNodeView(node) {
   const toggle = foldButton(node, collectExpanded, () => renderCollectTree(window.collectTreeData));
   const radio = document.createElement('input');
-  radio.type = 'radio'; radio.name = 'collect-source'; radio.checked = $('collect-folder').value === node.path;
+  const selectedPath = node.path || '.';
+  radio.type = 'radio'; radio.name = 'collect-source'; radio.checked = $('collect-folder').value === selectedPath;
   radio.setAttribute('aria-label', `Collect from ${node.name}`);
-  radio.onchange = () => { $('collect-folder').value = node.path; lastCollectPlan = null; $('collect-apply').disabled = true; renderCollectTree(window.collectTreeData); };
+  radio.onchange = () => { $('collect-folder').value = selectedPath; lastCollectPlan = null; $('collect-apply').disabled = true; renderCollectTree(window.collectTreeData); };
   const label = document.createElement('label'); label.textContent = node.name; label.onclick = () => radio.click();
   const row = document.createElement('div'); row.className = 'node-row'; row.append(toggle, radio, label);
   return wrapNode(node, row, collectExpanded.has(node.path), collectNodeView);
@@ -102,7 +103,7 @@ function renderRoots(host, tree, renderer, emptyText) {
 }
 
 function renderTree(tree) { renderRoots($('tree'), tree, mirrorNodeView, 'The storage folder has no subfolders.'); }
-function renderCollectTree(tree) { renderRoots($('collect-tree'), tree, collectNodeView, 'The imports folder has no subfolders.'); }
+function renderCollectTree(tree) { $('collect-tree').replaceChildren(collectNodeView(tree)); }
 function renderStorageTree(tree) { renderRoots($('collect-storage-tree'), tree, storageNodeView, 'The storage folder has no subfolders.'); }
 function normalizedPlan(plan) { return { create: plan.create || [], remove: plan.remove || [], skip: plan.skip || [] }; }
 
@@ -119,7 +120,7 @@ function renderPlanInto(plan, host, applyButton, message, createTitle = 'Create 
   return plan;
 }
 
-function collectRequest() { return { folder: $('collect-folder').value, pattern: $('collect-pattern').value, destination: $('collect-destination').value }; }
+function collectRequest() { const folder = $('collect-folder').value; return { folder: folder === '.' ? '' : folder, pattern: $('collect-pattern').value, destination: $('collect-destination').value }; }
 function showError(element, error) { element.textContent = error.message; element.className = 'message error'; }
 function rememberWildcard(pattern) {
   pattern = pattern.trim();
