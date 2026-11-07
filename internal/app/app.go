@@ -56,6 +56,7 @@ type server struct {
 }
 
 type treeNode struct {
+	FileCount int         `json:"fileCount"`
 	Path      string      `json:"path"`
 	Name      string      `json:"name"`
 	Directory bool        `json:"directory"`
@@ -519,7 +520,7 @@ func buildPlainTree(rootPath string) (*treeNode, error) {
 		if err != nil {
 			return err
 		}
-		if path == rootPath || !d.IsDir() {
+		if path == rootPath {
 			return nil
 		}
 		rel, err := filepath.Rel(rootPath, path)
@@ -527,11 +528,17 @@ func buildPlainTree(rootPath string) (*treeNode, error) {
 			return err
 		}
 		rel = slash(rel)
-		n := &treeNode{Path: rel, Name: d.Name(), Directory: true}
 		parent := slash(filepath.Dir(filepath.FromSlash(rel)))
 		if parent == "." {
 			parent = ""
 		}
+		if !d.IsDir() {
+			if d.Type().IsRegular() {
+				nodes[parent].FileCount++
+			}
+			return nil
+		}
+		n := &treeNode{Path: rel, Name: d.Name(), Directory: true}
 		nodes[parent].Children = append(nodes[parent].Children, n)
 		nodes[rel] = n
 		return nil
@@ -666,6 +673,7 @@ func (s *server) makeCollectPlan(request collectRequest) (plan, error) {
 	if err != nil {
 		return p, fmt.Errorf("storage subfolder: %w", err)
 	}
+	plannedNames := map[string]string{}
 	err = filepath.WalkDir(selected, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -673,10 +681,7 @@ func (s *server) makeCollectPlan(request collectRequest) (plan, error) {
 		if path == selected || d.IsDir() {
 			return nil
 		}
-		rel, err := filepath.Rel(selected, path)
-		if err != nil {
-			return err
-		}
+		rel := d.Name()
 		importRel, err := filepath.Rel(s.imports, path)
 		if err != nil {
 			return err
@@ -703,6 +708,15 @@ func (s *server) makeCollectPlan(request collectRequest) (plan, error) {
 		}
 		destinationInfo, err := os.Stat(dst)
 		if errors.Is(err, os.ErrNotExist) {
+			key := rel
+			if runtime.GOOS == "windows" {
+				key = strings.ToLower(key)
+			}
+			if previous, exists := plannedNames[key]; exists {
+				p.Skip = append(p.Skip, action{"conflict", slash(filepath.Join(destination, rel)), "duplicate filename from " + slash(importRel) + "; already planned from " + previous})
+				return nil
+			}
+			plannedNames[key] = slash(importRel)
 			p.Create = append(p.Create, action{"link", slash(filepath.Join(destination, rel)), slash(importRel)})
 			return nil
 		}

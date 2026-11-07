@@ -123,7 +123,7 @@ func TestEmptyPlanEncodesArrays(t *testing.T) {
 	}
 }
 
-func TestCollectPlanAndApplyPreserveRelativePaths(t *testing.T) {
+func TestCollectPlanAndApplyFlattenPaths(t *testing.T) {
 	root := t.TempDir()
 	storage := filepath.Join(root, "storage")
 	imports := filepath.Join(root, "imports")
@@ -156,7 +156,7 @@ func TestCollectPlanAndApplyPreserveRelativePaths(t *testing.T) {
 	if len(p.Create) != 2 {
 		t.Fatalf("create count = %d, want 2: %#v", len(p.Create), p)
 	}
-	if p.Create[0].Path != "Media/Collected/pilot.mkv" || p.Create[1].Path != "Media/Collected/season-one/finale.mkv" {
+	if p.Create[0].Path != "Media/Collected/finale.mkv" || p.Create[1].Path != "Media/Collected/pilot.mkv" {
 		t.Fatalf("unexpected collected paths: %#v", p.Create)
 	}
 	body, _ := json.Marshal(request)
@@ -167,7 +167,7 @@ func TestCollectPlanAndApplyPreserveRelativePaths(t *testing.T) {
 	}
 	for sourcePath, destination := range map[string]string{
 		filepath.Join(imports, "show", "pilot.mkv"):                filepath.Join(storage, "Media", "Collected", "pilot.mkv"),
-		filepath.Join(imports, "show", "season-one", "finale.mkv"): filepath.Join(storage, "Media", "Collected", "season-one", "finale.mkv"),
+		filepath.Join(imports, "show", "season-one", "finale.mkv"): filepath.Join(storage, "Media", "Collected", "finale.mkv"),
 	} {
 		sourceInfo, err := os.Stat(sourcePath)
 		if err != nil {
@@ -196,6 +196,36 @@ func TestCollectRejectsInvalidPathsAndPatterns(t *testing.T) {
 		if _, err := s.makeCollectPlan(request); err == nil {
 			t.Fatalf("expected rejection for %#v", request)
 		}
+	}
+}
+
+func TestCollectDuplicateNamesAndFolderCounts(t *testing.T) {
+	root := t.TempDir()
+	storage, imports := filepath.Join(root, "storage"), filepath.Join(root, "imports")
+	for _, dir := range []string{filepath.Join(storage, "destination", "nested"), filepath.Join(imports, "a"), filepath.Join(imports, "b")} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, path := range []string{filepath.Join(imports, "a", "same.mkv"), filepath.Join(imports, "b", "same.mkv"), filepath.Join(storage, "destination", "one.txt"), filepath.Join(storage, "destination", "nested", "two.txt")} {
+		if err := os.WriteFile(path, []byte("test"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := &server{source: storage, imports: imports}
+	p, err := s.makeCollectPlan(collectRequest{Pattern: "*.mkv", Destination: "destination"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Create) != 1 || len(p.Skip) != 1 || p.Skip[0].Kind != "conflict" {
+		t.Fatalf("duplicate name plan: %#v", p)
+	}
+	tree, err := buildPlainTree(storage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tree.Children[0].FileCount != 1 || tree.Children[0].Children[0].FileCount != 1 {
+		t.Fatalf("incorrect direct file counts: %#v", tree.Children[0])
 	}
 }
 
@@ -282,7 +312,7 @@ func TestCollectRootWithCaseInsensitiveWildcard(t *testing.T) {
 	if len(p.Create) != 2 {
 		t.Fatalf("case-insensitive root plan = %#v", p)
 	}
-	if p.Create[0].Path != "destination/movie.MKV" || p.Create[1].Path != "destination/nested/episode.mkv" {
+	if p.Create[0].Path != "destination/episode.mkv" || p.Create[1].Path != "destination/movie.MKV" {
 		t.Fatalf("unexpected root collection paths: %#v", p.Create)
 	}
 }
