@@ -116,7 +116,7 @@ function storageNodeView(node) {
   const label = document.createElement('label'); label.textContent = node.name; label.onclick = () => radio.click();
   const add = document.createElement('button'); add.type = 'button'; add.className = 'new-child-folder'; add.textContent = '+'; add.setAttribute('aria-label', `Create folder inside ${node.name}`);
   add.onclick = () => beginFolderCreate(node.path);
-  const count = document.createElement('span'); count.className = 'file-count'; count.textContent = node.loaded ? `${node.fileCount || 0} files` : '…'; count.title = 'Files directly in this folder (counted when opened)';
+  const count = document.createElement('span'); count.className = 'file-count'; count.textContent = node.counted ? `${node.fileCount || 0} files` : '…'; count.title = 'Files directly in this folder';
   const row = document.createElement('div'); row.className = 'node-row'; row.append(toggle, radio, label, count, add);
   return wrapNode(node, row, storageExpanded.has(node.path), storageNodeView);
 }

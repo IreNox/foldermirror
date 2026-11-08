@@ -21,7 +21,7 @@ go run . -storage /data/library -mirror /data/mirror -imports /data/downloads
 
 Open <http://127.0.0.1:8787>, choose folders, save, preview, and apply.
 
-Trees load one directory at a time as you expand folders. Storage file counts in Collect files appear after opening a folder; unopened folders show an ellipsis. Preview and Apply still scan the files needed for the operation.
+Trees load one directory at a time as you expand folders. In Collect files, expanding a parent also counts the files directly inside its child storage folders, so counts are visible while those folders remain folded. Preview and Apply still scan the files needed for the operation.
 
 On Windows both paths must be on the same drive:
 

@@ -56,6 +56,7 @@ type server struct {
 }
 
 type treeNode struct {
+	Counted   bool        `json:"counted"`
 	Loaded    bool        `json:"loaded"`
 	FileCount int         `json:"fileCount"`
 	Path      string      `json:"path"`
@@ -267,7 +268,7 @@ func (s *server) collectTree(w http.ResponseWriter, r *http.Request) {
 func (s *server) storageTree(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	tree, err := readTreeLevel(s.source, r.URL.Query().Get("path"), false)
+	tree, err := readStorageTreeLevel(s.source, r.URL.Query().Get("path"))
 	if err != nil {
 		writeError(w, err)
 		return
@@ -316,7 +317,7 @@ func (s *server) createStorageFolder(w http.ResponseWriter, r *http.Request) {
 		writeError(w, fmt.Errorf("create folder: %w", err))
 		return
 	}
-	tree, err := readTreeLevel(s.source, "", false)
+	tree, err := readStorageTreeLevel(s.source, "")
 	if err != nil {
 		writeError(w, err)
 		return
@@ -476,6 +477,38 @@ func (s *server) collectApply(w http.ResponseWriter, r *http.Request) {
 	}
 	result.Skip = append(result.Skip, p.Skip...)
 	writeJSON(w, result)
+}
+
+// readStorageTreeLevel also counts direct files in visible child folders,
+// without loading their trees or visiting any deeper directories.
+func readStorageTreeLevel(root, relative string) (*treeNode, error) {
+	node, err := readTreeLevel(root, relative, false)
+	if err != nil {
+		return nil, err
+	}
+	node.Counted = true
+	for _, child := range node.Children {
+		path, err := safePathInside(root, filepath.Join(root, filepath.FromSlash(child.Path)))
+		if err != nil {
+			return nil, err
+		}
+		dir, err := os.Open(path)
+		if err != nil {
+			return nil, err
+		}
+		entries, readErr := dir.ReadDir(-1)
+		dir.Close()
+		if readErr != nil {
+			return nil, readErr
+		}
+		for _, entry := range entries {
+			if entry.Type().IsRegular() {
+				child.FileCount++
+			}
+		}
+		child.Counted = true
+	}
+	return node, nil
 }
 
 // readTreeLevel reads only the requested directory, never its descendants.

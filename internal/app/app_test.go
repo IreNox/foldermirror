@@ -52,6 +52,14 @@ func TestReadTreeLevelLoadsOnlyRequestedFolder(t *testing.T) {
 	if _, err := readTreeLevel(root, "../outside", true); err == nil {
 		t.Fatal("accepted path outside root")
 	}
+	storage, err := readStorageTreeLevel(root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	child := storage.Children[0]
+	if !child.Counted || child.FileCount != 1 || child.Loaded || len(child.Children) != 0 {
+		t.Fatalf("child count should load without its tree: %#v", child)
+	}
 }
 
 func TestPlanApplyAndSafeStaleRemoval(t *testing.T) {
