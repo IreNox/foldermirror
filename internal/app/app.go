@@ -56,6 +56,7 @@ type server struct {
 }
 
 type treeNode struct {
+	Loaded    bool        `json:"loaded"`
 	FileCount int         `json:"fileCount"`
 	Path      string      `json:"path"`
 	Name      string      `json:"name"`
@@ -237,10 +238,10 @@ func (s *server) status(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, map[string]any{"storage": s.source, "mirror": s.target, "imports": s.imports, "source": s.source, "target": s.target, "platform": runtime.GOOS, "instance": s.instance, "rules": s.state.Rules, "wildcards": s.state.Wildcards, "managedFiles": len(s.state.Files)})
 }
 
-func (s *server) tree(w http.ResponseWriter, _ *http.Request) {
+func (s *server) tree(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	n, err := s.buildTree()
+	n, err := readTreeLevel(s.source, r.URL.Query().Get("path"), true)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -248,14 +249,14 @@ func (s *server) tree(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, n)
 }
 
-func (s *server) collectTree(w http.ResponseWriter, _ *http.Request) {
+func (s *server) collectTree(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.imports == "" {
 		http.Error(w, "collection mode requires the -imports option", http.StatusBadRequest)
 		return
 	}
-	n, err := buildPlainTree(s.imports)
+	n, err := readTreeLevel(s.imports, r.URL.Query().Get("path"), false)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -263,10 +264,10 @@ func (s *server) collectTree(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, n)
 }
 
-func (s *server) storageTree(w http.ResponseWriter, _ *http.Request) {
+func (s *server) storageTree(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	tree, err := buildPlainTree(s.source)
+	tree, err := readTreeLevel(s.source, r.URL.Query().Get("path"), false)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -315,7 +316,7 @@ func (s *server) createStorageFolder(w http.ResponseWriter, r *http.Request) {
 		writeError(w, fmt.Errorf("create folder: %w", err))
 		return
 	}
-	tree, err := buildPlainTree(s.source)
+	tree, err := readTreeLevel(s.source, "", false)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -475,6 +476,42 @@ func (s *server) collectApply(w http.ResponseWriter, r *http.Request) {
 	}
 	result.Skip = append(result.Skip, p.Skip...)
 	writeJSON(w, result)
+}
+
+// readTreeLevel reads only the requested directory, never its descendants.
+func readTreeLevel(root, relative string, includeFiles bool) (*treeNode, error) {
+	relative, err := cleanRelative(relative, true)
+	if err != nil {
+		return nil, err
+	}
+	path, err := safePathInside(root, filepath.Join(root, relative))
+	if err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return nil, err
+	}
+	node := &treeNode{Path: slash(relative), Name: filepath.Base(path), Directory: true, Loaded: true}
+	if relative == "" {
+		node.Name += " (root)"
+	}
+	for _, entry := range entries {
+		if entry.Type()&os.ModeSymlink != 0 {
+			continue
+		}
+		if !entry.IsDir() && !entry.Type().IsRegular() {
+			continue
+		}
+		if !entry.IsDir() {
+			node.FileCount++
+			if !includeFiles {
+				continue
+			}
+		}
+		node.Children = append(node.Children, &treeNode{Path: slash(filepath.Join(relative, entry.Name())), Name: entry.Name(), Directory: entry.IsDir()})
+	}
+	return node, nil
 }
 
 func (s *server) buildTree() (*treeNode, error) {

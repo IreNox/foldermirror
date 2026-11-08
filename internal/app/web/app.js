@@ -58,30 +58,45 @@ function setRule(path, value) {
   $('apply').disabled = true;
 }
 
-function foldButton(node, openSet, rerender) {
-  const hasChildren = Boolean(node.children?.length), isOpen = openSet.has(node.path);
+async function loadBranch(node, endpoint, openSet) {
+  if (!node.loaded) Object.assign(node, await api(`${endpoint}?path=${encodeURIComponent(node.path)}`));
+  await Promise.all((node.children || []).filter(child => child.directory && openSet.has(child.path)).map(child => loadBranch(child, endpoint, openSet)));
+  return node;
+}
+async function loadTree(endpoint, openSet) {
+  return loadBranch(await api(endpoint), endpoint, openSet);
+}
+
+function foldButton(node, openSet, rerender, endpoint, message) {
+  const hasChildren = node.directory && (!node.loaded || Boolean(node.children?.length)), isOpen = openSet.has(node.path);
   const button = document.createElement('button');
   button.className = 'fold'; button.type = 'button'; button.disabled = !hasChildren;
   button.setAttribute('aria-label', `${isOpen ? 'Collapse' : 'Expand'} ${node.name}`);
   button.setAttribute('aria-expanded', String(isOpen)); button.textContent = hasChildren ? '›' : '';
-  button.onclick = () => { if (isOpen) openSet.delete(node.path); else openSet.add(node.path); rerender(); };
+  button.onclick = () => withBusy(async () => {
+    try {
+      if (isOpen) openSet.delete(node.path);
+      else { await loadBranch(node, endpoint, openSet); openSet.add(node.path); }
+      rerender();
+    } catch (error) { showError($(message), error); }
+  });
   return button;
 }
 
 function mirrorNodeView(node) {
-  const toggle = foldButton(node, expanded, () => renderTree(window.treeData));
+  const toggle = foldButton(node, expanded, () => renderTree(window.treeData), '/api/tree', 'message');
   const box = document.createElement('input');
   box.type = 'checkbox'; box.checked = effective(node.path); box.setAttribute('aria-label', `Mirror ${node.name}`);
   box.onchange = () => { setRule(node.path, box.checked); renderTree(window.treeData); };
   const label = document.createElement('label'); label.textContent = node.name;
-  label.onclick = () => { if (node.children?.length) toggle.click(); else box.click(); };
+  label.onclick = () => { if (node.directory) toggle.click(); else box.click(); };
   const row = document.createElement('div'); row.className = `node-row ${node.directory ? 'folder-node' : 'file-node'}`; row.append(toggle, box, label);
   if (explicit(node.path)) { const badge = document.createElement('span'); badge.className = 'override'; badge.textContent = 'override'; row.append(badge); }
   return wrapNode(node, row, expanded.has(node.path), mirrorNodeView);
 }
 
 function collectNodeView(node) {
-  const toggle = foldButton(node, collectExpanded, () => renderCollectTree(window.collectTreeData));
+  const toggle = foldButton(node, collectExpanded, () => renderCollectTree(window.collectTreeData), '/api/collect/tree', 'collect-message');
   const radio = document.createElement('input');
   const selectedPath = node.path || '.';
   radio.type = 'radio'; radio.name = 'collect-source'; radio.checked = $('collect-folder').value === selectedPath;
@@ -93,7 +108,7 @@ function collectNodeView(node) {
 }
 
 function storageNodeView(node) {
-  const toggle = foldButton(node, storageExpanded, () => renderStorageTree(window.storageTreeData));
+  const toggle = foldButton(node, storageExpanded, () => renderStorageTree(window.storageTreeData), '/api/storage/tree', 'collect-message');
   const radio = document.createElement('input');
   radio.type = 'radio'; radio.name = 'collect-destination'; radio.checked = $('collect-destination').value === node.path;
   radio.setAttribute('aria-label', `Collect into ${node.name}`);
@@ -101,7 +116,7 @@ function storageNodeView(node) {
   const label = document.createElement('label'); label.textContent = node.name; label.onclick = () => radio.click();
   const add = document.createElement('button'); add.type = 'button'; add.className = 'new-child-folder'; add.textContent = '+'; add.setAttribute('aria-label', `Create folder inside ${node.name}`);
   add.onclick = () => beginFolderCreate(node.path);
-  const count = document.createElement('span'); count.className = 'file-count'; count.textContent = `${node.fileCount || 0} files`; count.title = 'Files directly in this folder';
+  const count = document.createElement('span'); count.className = 'file-count'; count.textContent = node.loaded ? `${node.fileCount || 0} files` : '…'; count.title = 'Files directly in this folder (counted when opened)';
   const row = document.createElement('div'); row.className = 'node-row'; row.append(toggle, radio, label, count, add);
   return wrapNode(node, row, storageExpanded.has(node.path), storageNodeView);
 }
@@ -151,8 +166,9 @@ function showApplyResult(element, plan, successText) {
   showMessage(element, errors ? `${errors} action${errors === 1 ? '' : 's'} failed. Successful changes were kept; see Needs attention below.` : successText, errors > 0);
 }
 async function reloadStorageViews() {
-  [window.treeData, window.storageTreeData] = await Promise.all([api('/api/tree'), api('/api/storage/tree')]);
-  renderTree(window.treeData);
+  const [mirror, storage] = await Promise.all([window.treeData ? loadTree('/api/tree', expanded) : null, loadTree('/api/storage/tree', storageExpanded)]);
+  if (mirror) { window.treeData = mirror; renderTree(mirror); }
+  window.storageTreeData = storage;
   renderStorageTree(window.storageTreeData);
 }
 function rememberWildcard(pattern) {
@@ -181,13 +197,13 @@ async function showMode(mode) {
   $('mirror-tab').setAttribute('aria-selected', String(!collect)); $('collect-tab').setAttribute('aria-selected', String(collect));
   if (collect && !collectLoaded && !$('collect-tab').disabled) {
     try {
-      [window.collectTreeData, window.storageTreeData] = await Promise.all([api('/api/collect/tree'), api('/api/storage/tree')]);
+      [window.collectTreeData, window.storageTreeData] = await Promise.all([loadTree('/api/collect/tree', collectExpanded), loadTree('/api/storage/tree', storageExpanded)]);
       renderCollectTree(window.collectTreeData); renderStorageTree(window.storageTreeData); collectLoaded = true;
     }
     catch (error) { showError($('collect-message'), error); }
   }
-  else if (!collect && window.treeData) {
-    try { window.treeData = await api('/api/tree'); renderTree(window.treeData); }
+  else if (!collect) {
+    try { window.treeData = await loadTree('/api/tree', expanded); renderTree(window.treeData); }
     catch (error) { showError($('message'), error); }
   }
 }
@@ -200,7 +216,6 @@ async function init() {
     $('platform').textContent = `${status.platform} · ${status.instance}`;
     $('managed').textContent = status.managedFiles; rules = status.rules || []; $('selected').textContent = rules.length;
     wildcardHistory = status.wildcards || []; renderWildcardHistory();
-    window.treeData = await api('/api/tree'); renderTree(window.treeData);
     if (!status.imports) { $('collect-tab').disabled = true; $('collect-tab').title = 'Restart with -imports PATH to enable collection mode'; await showMode('mirror'); }
     else await showMode('collect');
   } catch (error) { showError($('message'), error); }
@@ -221,12 +236,10 @@ $('new-folder-form').onsubmit = async event => {
   const form = $('new-folder-form');
   try {
     const response = await api('/api/storage/folders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ parent: form.dataset.parent || '', name: $('new-folder-name').value }) });
-    window.storageTreeData = response.tree;
     if (form.dataset.parent) storageExpanded.add(form.dataset.parent);
     $('collect-destination').value = response.path;
     lastCollectPlan = null; $('collect-apply').disabled = true; form.hidden = true;
-    renderStorageTree(window.storageTreeData);
-    window.treeData = await api('/api/tree'); renderTree(window.treeData);
+    await reloadStorageViews();
     showMessage($('collect-message'), `Created storage folder ${response.path}.`);
   } catch (error) { showError($('collect-message'), error); }
 };

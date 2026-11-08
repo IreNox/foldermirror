@@ -20,6 +20,40 @@ func TestEffectiveRules(t *testing.T) {
 	}
 }
 
+func TestReadTreeLevelLoadsOnlyRequestedFolder(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "album", "nested"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "album", "track.flac"), []byte("music"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	tree, err := readTreeLevel(root, "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tree.Loaded || len(tree.Children) != 1 || tree.Children[0].Loaded || len(tree.Children[0].Children) != 0 {
+		t.Fatalf("root should not load descendants: %#v", tree)
+	}
+	branch, err := readTreeLevel(root, "album", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if branch.Path != "album" || branch.FileCount != 1 || len(branch.Children) != 2 {
+		t.Fatalf("incorrect mirror branch: %#v", branch)
+	}
+	folders, err := readTreeLevel(root, "album", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if folders.FileCount != 1 || len(folders.Children) != 1 || !folders.Children[0].Directory {
+		t.Fatalf("incorrect folder-only branch: %#v", folders)
+	}
+	if _, err := readTreeLevel(root, "../outside", true); err == nil {
+		t.Fatal("accepted path outside root")
+	}
+}
+
 func TestPlanApplyAndSafeStaleRemoval(t *testing.T) {
 	root := t.TempDir()
 	source := filepath.Join(root, "source")
