@@ -9,6 +9,23 @@ const collectExpanded = new Set();
 const storageExpanded = new Set();
 const $ = id => document.getElementById(id);
 
+let busy = false;
+async function withBusy(operation) {
+  if (busy) return;
+  busy = true;
+  $('workspace-controls').disabled = true;
+  $('workspace-controls').setAttribute('aria-busy', 'true');
+  $('busy-status').hidden = false;
+  try {
+    return await operation();
+  } finally {
+    busy = false;
+    $('workspace-controls').disabled = false;
+    $('workspace-controls').setAttribute('aria-busy', 'false');
+    $('busy-status').hidden = true;
+  }
+}
+
 async function api(path, options = {}) {
   options.headers = { ...(options.headers || {}), 'X-FolderMirror-Token': token };
   const response = await fetch(path, options);
@@ -213,4 +230,14 @@ $('new-folder-form').onsubmit = async event => {
     showMessage($('collect-message'), `Created storage folder ${response.path}.`);
   } catch (error) { showError($('collect-message'), error); }
 };
-init();
+for (const id of ['mirror-tab', 'collect-tab', 'save', 'preview', 'apply', 'collect-preview', 'collect-apply']) {
+  const button = $(id);
+  const handler = button.onclick;
+  button.onclick = event => withBusy(() => handler(event));
+}
+const createFolder = $('new-folder-form').onsubmit;
+$('new-folder-form').onsubmit = event => {
+  event.preventDefault();
+  return withBusy(() => createFolder(event));
+};
+withBusy(init);

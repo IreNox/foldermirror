@@ -7,6 +7,8 @@
 </head>
 <body>
   <main>
+    <div id="busy-status" class="busy-status" role="status" aria-live="polite" hidden><span class="spinner" aria-hidden="true"></span>Working…</div>
+    <fieldset id="workspace-controls" class="workspace-controls">
     <header><div class="brand"><span class="mark">FM</span><div><h1>FolderMirror</h1><p>Hardlink storage workspace</p></div></div><span id="platform" class="pill">Loading</span></header>
     <nav class="mode-tabs" aria-label="Workspace mode">
       <button id="collect-tab" class="mode-tab active" aria-selected="true">Collect files</button>
@@ -43,6 +45,7 @@
         <section class="panel run-panel"><div class="panel-head"><div><h2>Reconcile</h2><p>Review changes before touching the mirror.</p></div></div><div class="summary"><div><strong id="managed">0</strong><span>managed files</span></div><div><strong id="selected">0</strong><span>folder rules</span></div></div><div class="actions"><button id="preview">Preview changes</button><button id="apply" class="danger" disabled>Apply plan</button></div><div id="message" role="status" class="message">Save your choices, then preview.</div><div id="plan" class="plan"></div></section>
       </div>
     </section>
+    </fieldset>
   </main>
   <script src="/app.js" defer></script>
 </body></html>
